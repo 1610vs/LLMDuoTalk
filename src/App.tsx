@@ -29,7 +29,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(true);
   const [ttsSettings, setTtsSettings] = useState<TTSSettings>(DEFAULT_TTS);
-  const [translateAPI, setTranslateAPI] = useState<TranslateAPI>('mymemory');
+  const [translateAPI, setTranslateAPI] = useState<TranslateAPI>('gemini');
+  const [geminiKey, setGeminiKey] = useState('');
   const [openRouterKey, setOpenRouterKey] = useState('');
   const [voiceOverrideA, setVoiceOverrideA] = useState<string | null>(null);
   const [voiceOverrideB, setVoiceOverrideB] = useState<string | null>(null);
@@ -40,6 +41,7 @@ export default function App() {
   const langARef = useRef(langA);
   const langBRef = useRef(langB);
   const translateAPIRef = useRef(translateAPI);
+  const geminiKeyRef = useRef(geminiKey);
   const openRouterKeyRef = useRef(openRouterKey);
   const autoSpeakRef = useRef(autoSpeak);
   const voiceOverrideARef = useRef(voiceOverrideA);
@@ -51,6 +53,7 @@ export default function App() {
   useEffect(() => { langARef.current = langA; }, [langA]);
   useEffect(() => { langBRef.current = langB; }, [langB]);
   useEffect(() => { translateAPIRef.current = translateAPI; }, [translateAPI]);
+  useEffect(() => { geminiKeyRef.current = geminiKey; }, [geminiKey]);
   useEffect(() => { openRouterKeyRef.current = openRouterKey; }, [openRouterKey]);
   useEffect(() => { autoSpeakRef.current = autoSpeak; }, [autoSpeak]);
   useEffect(() => { voiceOverrideARef.current = voiceOverrideA; }, [voiceOverrideA]);
@@ -94,11 +97,12 @@ export default function App() {
     const fromLang = speaker === 'A' ? langARef.current : langBRef.current;
     const toLang   = speaker === 'A' ? langBRef.current : langARef.current;
     const currentAPI = translateAPIRef.current;
+    const gemKey = geminiKeyRef.current;
     const orKey = openRouterKeyRef.current;
     const shouldAutoSpeak = autoSpeakRef.current;
 
     try {
-      const result = await translate(text, fromLang, toLang, currentAPI, orKey || undefined);
+      const result = await translate(text, fromLang, toLang, currentAPI, gemKey || undefined, orKey || undefined);
 
       const entry: DialogEntry = {
         id: Date.now().toString(),
@@ -117,23 +121,15 @@ export default function App() {
       if (shouldAutoSpeak && result.text) {
         setAppState('speaking');
 
-        // For Web Speech: apply voice override
         if (ttsSettingsRef.current.engine === 'web-speech') {
           const targetVoice = speaker === 'A' ? voiceOverrideBRef.current : voiceOverrideARef.current;
           tts.setVoiceOverride(targetVoice);
         }
 
         try {
-          // isSpeakerA in tts.speak means: is the speaker that HEARD the original A?
-          // The *target* is the other side, so pass speaker === 'A' as isSpeakerA flag:
-          // → voiceIdA = voice for speaker A's *target language*, i.e., what B hears
           await tts.speak(result.text, toLang, speaker === 'A');
-
-          // Update last entry with tts engine info
           setDialog(prev => prev.map(e =>
-            e.id === entry.id
-              ? { ...e, ttsEngine: ttsSettingsRef.current.engine }
-              : e
+            e.id === entry.id ? { ...e, ttsEngine: ttsSettingsRef.current.engine } : e
           ));
         } catch (err) {
           console.warn('[TTS] speak error:', err);
@@ -217,9 +213,12 @@ export default function App() {
   const langAInfo = LANGUAGES.find(l => l.code === langA);
   const langBInfo = LANGUAGES.find(l => l.code === langB);
 
-  const isPremiumActive = translateAPI === 'openrouter' || ttsSettings.engine === 'elevenlabs';
+  const hasGeminiKey = !!geminiKey;
   const hasOpenRouterKey = !!openRouterKey;
   const hasELKey = !!ttsSettings.elevenLabsKey;
+
+  const isLLMActive = (translateAPI === 'gemini' && hasGeminiKey) || (translateAPI === 'openrouter' && hasOpenRouterKey);
+  const isELActive = ttsSettings.engine === 'elevenlabs' && hasELKey;
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -236,9 +235,9 @@ export default function App() {
               <h1 className="text-[15px] font-black text-white leading-tight tracking-tight">VoiceSwap</h1>
               <div className="flex items-center gap-1.5">
                 <p className="text-[10px] text-slate-500 leading-tight">Голосовой переводчик</p>
-                {isPremiumActive && (
-                  <span className="text-[8px] font-bold bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white px-1.5 py-0.5 rounded-full">
-                    PRO
+                {isLLMActive && (
+                  <span className="text-[8px] font-bold bg-gradient-to-r from-emerald-600 to-teal-600 text-white px-1.5 py-0.5 rounded-full">
+                    LLM
                   </span>
                 )}
               </div>
@@ -246,23 +245,32 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* API key indicators */}
+            {/* Key status indicators */}
+            {translateAPI === 'gemini' && (
+              <div className={`flex items-center gap-1 text-[9px] px-2 py-1 rounded-lg border ${
+                hasGeminiKey
+                  ? 'bg-emerald-900/30 text-emerald-400 border-emerald-700/30'
+                  : 'bg-amber-900/20 text-amber-400 border-amber-700/30'
+              }`}>
+                🧠 {hasGeminiKey ? 'Gemini ✓' : 'Без ключа'}
+              </div>
+            )}
             {translateAPI === 'openrouter' && (
               <div className={`flex items-center gap-1 text-[9px] px-2 py-1 rounded-lg border ${
                 hasOpenRouterKey
                   ? 'bg-purple-900/30 text-purple-400 border-purple-700/30'
-                  : 'bg-red-900/20 text-red-400 border-red-700/30'
+                  : 'bg-amber-900/20 text-amber-400 border-amber-700/30'
               }`}>
-                🤖 {hasOpenRouterKey ? 'LLM ✓' : 'Нет ключа'}
+                🤖 {hasOpenRouterKey ? 'DeepSeek ✓' : 'Без ключа'}
               </div>
             )}
             {ttsSettings.engine === 'elevenlabs' && (
               <div className={`flex items-center gap-1 text-[9px] px-2 py-1 rounded-lg border ${
                 hasELKey
                   ? 'bg-violet-900/30 text-violet-400 border-violet-700/30'
-                  : 'bg-red-900/20 text-red-400 border-red-700/30'
+                  : 'bg-amber-900/20 text-amber-400 border-amber-700/30'
               }`}>
-                🎙 {hasELKey ? 'EL ✓' : 'Нет ключа'}
+                🎙 {hasELKey ? 'EL ✓' : 'Без ключа'}
               </div>
             )}
             {!asrSupported && (
@@ -325,34 +333,50 @@ export default function App() {
           </div>
         ) : isTranslating ? (
           <div className={`border rounded-2xl px-4 py-3 flex items-center gap-3 ${
-            translateAPI === 'openrouter'
+            translateAPI === 'gemini' && hasGeminiKey
+              ? 'bg-emerald-950/40 border-emerald-700/40'
+              : translateAPI === 'openrouter' && hasOpenRouterKey
               ? 'bg-purple-950/40 border-purple-700/40'
               : 'bg-indigo-950/40 border-indigo-700/40'
           }`}>
             <div className={`w-5 h-5 border-2 border-t-transparent rounded-full animate-spin flex-shrink-0 ${
-              translateAPI === 'openrouter' ? 'border-purple-400' : 'border-indigo-400'
+              translateAPI === 'gemini' && hasGeminiKey ? 'border-emerald-400'
+              : translateAPI === 'openrouter' && hasOpenRouterKey ? 'border-purple-400'
+              : 'border-indigo-400'
             }`} />
             <div>
-              <p className={`text-sm font-medium ${translateAPI === 'openrouter' ? 'text-purple-300' : 'text-indigo-300'}`}>
-                {translateAPI === 'openrouter' ? '🤖 LLM перевод...' : 'Перевод...'}
+              <p className={`text-sm font-medium ${
+                translateAPI === 'gemini' && hasGeminiKey ? 'text-emerald-300'
+                : translateAPI === 'openrouter' && hasOpenRouterKey ? 'text-purple-300'
+                : 'text-indigo-300'
+              }`}>
+                {translateAPI === 'gemini' && hasGeminiKey ? '🧠 Gemini переводит...'
+                : translateAPI === 'openrouter' && hasOpenRouterKey ? '🤖 DeepSeek переводит...'
+                : 'Перевод...'}
               </p>
-              <p className={`text-xs opacity-60 ${translateAPI === 'openrouter' ? 'text-purple-400' : 'text-indigo-400'}`}>
-                {translateAPI === 'openrouter' ? 'DeepSeek-V3 · контекст и тон' : `API: ${translateAPI}`}
+              <p className={`text-xs opacity-60 ${
+                translateAPI === 'gemini' && hasGeminiKey ? 'text-emerald-400'
+                : translateAPI === 'openrouter' && hasOpenRouterKey ? 'text-purple-400'
+                : 'text-indigo-400'
+              }`}>
+                {translateAPI === 'gemini' && hasGeminiKey ? 'Google AI · контекст и идиомы'
+                : translateAPI === 'openrouter' && hasOpenRouterKey ? 'DeepSeek-V3 · контекст и тон'
+                : `API: ${translateAPI}`}
               </p>
             </div>
           </div>
         ) : isSpeaking ? (
           <div className={`border rounded-2xl px-4 py-3 flex items-center gap-3 ${
-            ttsSettings.engine === 'elevenlabs'
+            ttsSettings.engine === 'elevenlabs' && hasELKey
               ? 'bg-violet-950/40 border-violet-700/40'
               : 'bg-emerald-950/40 border-emerald-700/40'
           }`}>
-            <SoundWave color={ttsSettings.engine === 'elevenlabs' ? 'violet' : 'emerald'} />
+            <SoundWave color={ttsSettings.engine === 'elevenlabs' && hasELKey ? 'violet' : 'emerald'} />
             <div>
-              <p className={`text-sm font-medium ${ttsSettings.engine === 'elevenlabs' ? 'text-violet-300' : 'text-emerald-300'}`}>
-                {ttsSettings.engine === 'elevenlabs' ? '🎙 ElevenLabs говорит...' : 'Воспроизведение...'}
+              <p className={`text-sm font-medium ${ttsSettings.engine === 'elevenlabs' && hasELKey ? 'text-violet-300' : 'text-emerald-300'}`}>
+                {ttsSettings.engine === 'elevenlabs' && hasELKey ? '🎙 ElevenLabs говорит...' : 'Воспроизведение...'}
               </p>
-              <p className={`text-xs opacity-50 ${ttsSettings.engine === 'elevenlabs' ? 'text-violet-400' : 'text-emerald-400'}`}>
+              <p className={`text-xs opacity-50 ${ttsSettings.engine === 'elevenlabs' && hasELKey ? 'text-violet-400' : 'text-emerald-400'}`}>
                 Нажмите Стоп чтобы прервать
               </p>
             </div>
@@ -391,19 +415,21 @@ export default function App() {
           {/* Engine badge row */}
           <div className="flex items-center justify-center gap-2 mb-2">
             <span className={`text-[9px] px-2 py-0.5 rounded-full border font-medium ${
-              translateAPI === 'openrouter' && hasOpenRouterKey
-                ? 'bg-purple-900/40 text-purple-400 border-purple-700/30'
+              isLLMActive
+                ? translateAPI === 'gemini'
+                  ? 'bg-emerald-900/40 text-emerald-400 border-emerald-700/30'
+                  : 'bg-purple-900/40 text-purple-400 border-purple-700/30'
                 : 'bg-slate-800/60 text-slate-600 border-slate-700/30'
             }`}>
-              🌍 {translateAPI === 'openrouter' && hasOpenRouterKey ? 'DeepSeek-V3' : translateAPI}
+              🌍 {isLLMActive ? (translateAPI === 'gemini' ? 'Gemini Flash' : 'DeepSeek-V3') : translateAPI}
             </span>
             <span className="text-slate-800 text-[8px]">+</span>
             <span className={`text-[9px] px-2 py-0.5 rounded-full border font-medium ${
-              ttsSettings.engine === 'elevenlabs' && hasELKey
+              isELActive
                 ? 'bg-violet-900/40 text-violet-400 border-violet-700/30'
                 : 'bg-slate-800/60 text-slate-600 border-slate-700/30'
             }`}>
-              🔊 {ttsSettings.engine === 'elevenlabs' && hasELKey ? 'ElevenLabs Flash' : 'Web Speech'}
+              🔊 {isELActive ? 'ElevenLabs Flash' : 'Web Speech'}
             </span>
           </div>
 
@@ -470,6 +496,8 @@ export default function App() {
           onAutoSpeakChange={setAutoSpeak}
           translateAPI={translateAPI}
           onTranslateAPIChange={setTranslateAPI}
+          geminiKey={geminiKey}
+          onGeminiKeyChange={setGeminiKey}
           openRouterKey={openRouterKey}
           onOpenRouterKeyChange={setOpenRouterKey}
           voices={tts.voices}
