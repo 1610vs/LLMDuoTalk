@@ -1,4 +1,4 @@
-// Hybrid TTS: ElevenLabs Flash v2.5 + Web Speech API fallback
+// Hybrid TTS: ElevenLabs Flash v2.5 + Web Speech API (with enhanced iOS voice selection)
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 export type TTSEngine = 'web-speech' | 'elevenlabs';
@@ -50,6 +50,16 @@ export const EL_VOICE_PRESETS: ELVoicePreset[] = [
   { id: 'onwK4e9ZLuTAKqWW03F9', name: 'Daniel',   gender: 'male',   langs: ['en', 'de', 'fr', 'cs', 'sk', 'hu'] },
 ];
 
+// Enhanced iOS/macOS premium voices — these sound MUCH better than default
+const PREMIUM_VOICE_PATTERNS = [
+  // iOS Premium voices (Siri-quality)
+  'premium', 'enhanced', 'Siri', 'Samantha', 'Daniel', 'Yuri', 'Milena', 'Katya',
+  'Tatiana', 'Maxim', 'Victoria', 'Ava', 'Oliver', 'Thomas', 'Martha', 'Arthur',
+  'Martin', 'Helena', 'Kanya', 'Lekha', 'Ting-Ting', 'Li-Mu', 'Mónica', 'Paulina',
+  'Satu', 'Amélie', 'Carmit', 'Oren', 'Ellen', 'Mei-Jia', 'Lesya', 'Zosia',
+  'Google', // Android high-quality voices
+];
+
 export function isTTSSupported(): boolean {
   return 'speechSynthesis' in window;
 }
@@ -61,17 +71,35 @@ function getWebVoicesForLang(
 ): SpeechSynthesisVoice[] {
   const lc = lang.toLowerCase();
   const prefix = lc.split('-')[0];
+
+  // Step 1: Filter by language
   let voices = all.filter(v => v.lang.toLowerCase() === lc);
   if (!voices.length) voices = all.filter(v => v.lang.toLowerCase().startsWith(prefix));
   if (!voices.length) return [];
 
+  // Step 2: Prioritize premium/enhanced voices
+  const premiumVoices = voices.filter(v =>
+    PREMIUM_VOICE_PATTERNS.some(p =>
+      v.name.toLowerCase().includes(p.toLowerCase()) ||
+      (v.voiceURI && v.voiceURI.toLowerCase().includes(p.toLowerCase()))
+    )
+  );
+  if (premiumVoices.length) voices = premiumVoices;
+
+  // Step 3: Gender filtering
   const femaleKw = ['female','woman','girl','zira','hazel','susan','kate','karen','samantha',
     'victoria','fiona','moira','tessa','veena','yelena','alice','amelie','anna','ioana',
-    'andreea','milena','dariya','luciana'];
+    'andreea','milena','dariya','luciana','rachel','bella','sarah','matilda','lily','katya',
+    'tatiana','martha','helene','carmit','ellen','paulina','monica','zosia','lesya'];
   const maleKw = ['male','man','guy','daniel','alex','fred','jorge','diego','tarik','luca',
-    'thomas','nicolas','reed','nikos'];
+    'thomas','nicolas','reed','nikos','adam','arnold','antoni','sam','yuri','maxim','oliver',
+    'arthur','martin','oren','mehdi'];
   const kw = preferFemale ? femaleKw : maleKw;
-  const gendered = voices.filter(v => kw.some(k => v.name.toLowerCase().includes(k)));
+  const gendered = voices.filter(v =>
+    kw.some(k => v.name.toLowerCase().includes(k)) ||
+    (v.voiceURI && kw.some(k => v.voiceURI.toLowerCase().includes(k)))
+  );
+
   return gendered.length ? gendered : voices;
 }
 
@@ -94,7 +122,23 @@ export function useTTS(settings: TTSSettings) {
 
     const load = () => {
       const v = window.speechSynthesis.getVoices();
-      if (v.length > 0) { setVoices(v); setIsLoaded(true); return true; }
+      if (v.length > 0) {
+        // Sort: premium first, then by name
+        const sorted = [...v].sort((a, b) => {
+          const aPremium = PREMIUM_VOICE_PATTERNS.some(p =>
+            a.name.toLowerCase().includes(p.toLowerCase())
+          );
+          const bPremium = PREMIUM_VOICE_PATTERNS.some(p =>
+            b.name.toLowerCase().includes(p.toLowerCase())
+          );
+          if (aPremium && !bPremium) return -1;
+          if (!aPremium && bPremium) return 1;
+          return a.name.localeCompare(b.name);
+        });
+        setVoices(sorted);
+        setIsLoaded(true);
+        return true;
+      }
       return false;
     };
     if (load()) return;
