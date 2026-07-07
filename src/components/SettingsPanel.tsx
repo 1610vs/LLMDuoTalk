@@ -13,6 +13,8 @@ interface SettingsPanelProps {
   onAutoSpeakChange: (v: boolean) => void;
   translateAPI: TranslateAPI;
   onTranslateAPIChange: (api: TranslateAPI) => void;
+  geminiKey: string;
+  onGeminiKeyChange: (k: string) => void;
   openRouterKey: string;
   onOpenRouterKeyChange: (k: string) => void;
   voices: SpeechSynthesisVoice[];
@@ -29,6 +31,7 @@ export function SettingsPanel({
   ttsSettings, onTTSChange,
   autoSpeak, onAutoSpeakChange,
   translateAPI, onTranslateAPIChange,
+  geminiKey, onGeminiKeyChange,
   openRouterKey, onOpenRouterKeyChange,
   voices, langA, langB,
   voiceOverrideA, voiceOverrideB,
@@ -37,10 +40,12 @@ export function SettingsPanel({
 }: SettingsPanelProps) {
   const [diagResults, setDiagResults] = useState<DiagResult[]>([]);
   const [diagRunning, setDiagRunning] = useState(false);
-  const [showElKey, setShowElKey] = useState(false);
+  const [showGemKey, setShowGemKey] = useState(false);
   const [showOrKey, setShowOrKey] = useState(false);
+  const [showElKey, setShowElKey] = useState(false);
 
   const isEL = ttsSettings.engine === 'elevenlabs';
+  const isGem = translateAPI === 'gemini';
   const isOR = translateAPI === 'openrouter';
 
   const voicesForLangA = voices.filter(v =>
@@ -72,6 +77,19 @@ export function SettingsPanel({
       results.push({ label: 'MyMemory API', ok: (res as Response).ok, detail: (res as Response).ok ? 'OK' : `HTTP ${(res as Response).status}` });
     } catch (e) {
       results.push({ label: 'MyMemory API', ok: false, detail: `Недоступен: ${(e as Error).message}` });
+    }
+
+    // Gemini
+    if (geminiKey) {
+      try {
+        const res = await Promise.race([
+          fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash?key=${geminiKey}`),
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
+        ]);
+        results.push({ label: 'Gemini API', ok: (res as Response).ok, detail: (res as Response).ok ? 'Ключ валиден ✓' : `HTTP ${(res as Response).status}` });
+      } catch (e) {
+        results.push({ label: 'Gemini API', ok: false, detail: `Ошибка: ${(e as Error).message}` });
+      }
     }
 
     // OpenRouter
@@ -133,26 +151,34 @@ export function SettingsPanel({
 
         {/* ── ENGINE SELECTION ─────────────────────────────────────────────── */}
         <Section icon="🚀" title="Движок перевода + голоса">
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <EngineCard
-              active={!isOR && !isEL}
-              title="Бесплатный"
+              active={!isGem && !isOR && !isEL}
+              title="Базовый"
               subtitle="MyMemory + Web Speech"
               badge="🆓 Без ключей"
-              badgeColor="emerald"
+              badgeColor="slate"
               onClick={() => { onTranslateAPIChange('mymemory'); onTTSChange({ ...ttsSettings, engine: 'web-speech' }); }}
+            />
+            <EngineCard
+              active={isGem && !isEL}
+              title="Улучшенный"
+              subtitle="Gemini + Premium голоса"
+              badge="🧠 Бесплатно"
+              badgeColor="emerald"
+              onClick={() => { onTranslateAPIChange('gemini'); onTTSChange({ ...ttsSettings, engine: 'web-speech' }); }}
             />
             <EngineCard
               active={isOR && isEL}
               title="Премиум"
-              subtitle="DeepSeek LLM + ElevenLabs"
-              badge="🔑 Нужны ключи"
+              subtitle="DeepSeek + ElevenLabs"
+              badge="🔑 API ключи"
               badgeColor="purple"
               onClick={() => { onTranslateAPIChange('openrouter'); onTTSChange({ ...ttsSettings, engine: 'elevenlabs' }); }}
             />
           </div>
           <p className="text-[10px] text-slate-600 mt-2 px-1">
-            При ошибке премиум-API приложение автоматически откатывается на бесплатный.
+            При ошибке API приложение автоматически откатывается на следующий уровень.
           </p>
         </Section>
 
@@ -160,21 +186,27 @@ export function SettingsPanel({
         <Section icon="🌍" title="Перевод">
           <div className="space-y-2">
             {([
-              { id: 'openrouter' as const, name: 'OpenRouter (DeepSeek-V3)', desc: 'LLM-качество · идиомы · тон · контекст', premium: true },
-              { id: 'mymemory' as const, name: 'MyMemory', desc: 'Бесплатно · ~5000 зап/день · рекомендуется', premium: false },
-              { id: 'lingva' as const, name: 'Lingva Translate', desc: 'Бесплатно · без лимитов · на основе Google', premium: false },
-              { id: 'libretranslate' as const, name: 'LibreTranslate', desc: 'Open source · может быть медленнее', premium: false },
+              { id: 'gemini' as const, name: 'Gemini 2.5 Flash', desc: 'Бесплатный LLM · Google AI · 1500 зап/день · идиомы · контекст', premium: false, color: 'emerald' },
+              { id: 'openrouter' as const, name: 'OpenRouter (DeepSeek-V3)', desc: 'Бесплатный tier · ~50 зап/день · лучшее качество', premium: true, color: 'purple' },
+              { id: 'mymemory' as const, name: 'MyMemory', desc: 'Бесплатно · ~5000 зап/день · статистический перевод', premium: false, color: 'slate' },
+              { id: 'lingva' as const, name: 'Lingva Translate', desc: 'Бесплатно · без лимитов · на основе Google', premium: false, color: 'slate' },
+              { id: 'libretranslate' as const, name: 'LibreTranslate', desc: 'Open source · может быть медленнее', premium: false, color: 'slate' },
             ]).map(api => (
               <button key={api.id} onClick={() => onTranslateAPIChange(api.id)}
                 className={`w-full text-left px-4 py-3 rounded-2xl border transition-all active:scale-[0.98] ${
                   translateAPI === api.id
-                    ? api.premium ? 'border-purple-500/70 bg-purple-900/30 text-white' : 'border-indigo-500/70 bg-indigo-900/30 text-white'
+                    ? api.color === 'emerald' ? 'border-emerald-500/70 bg-emerald-900/30 text-white'
+                    : api.color === 'purple' ? 'border-purple-500/70 bg-purple-900/30 text-white'
+                    : 'border-indigo-500/70 bg-indigo-900/30 text-white'
                     : 'border-slate-700/60 bg-slate-800/60 text-slate-300'
                 }`} style={{ WebkitTapHighlightColor: 'transparent' }}>
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-sm">{api.name}</span>
                   <div className="flex items-center gap-1.5">
                     {api.premium && <span className="text-[9px] bg-purple-900/50 text-purple-400 px-1.5 py-0.5 rounded-full border border-purple-700/40">PRO</span>}
+                    {!api.premium && api.id !== 'mymemory' && api.id !== 'lingva' && api.id !== 'libretranslate' && (
+                      <span className="text-[9px] bg-emerald-900/50 text-emerald-400 px-1.5 py-0.5 rounded-full border border-emerald-700/40">FREE</span>
+                    )}
                     {translateAPI === api.id && <span className="text-indigo-400 font-bold text-sm">✓</span>}
                   </div>
                 </div>
@@ -182,6 +214,29 @@ export function SettingsPanel({
               </button>
             ))}
           </div>
+
+          {/* Gemini key input */}
+          {isGem && (
+            <div className="mt-3">
+              <label className="block text-xs text-slate-400 mb-1.5 font-medium">Gemini API Key</label>
+              <div className="relative">
+                <input
+                  type={showGemKey ? 'text' : 'password'}
+                  value={geminiKey}
+                  onChange={e => onGeminiKeyChange(e.target.value)}
+                  placeholder="AIza..."
+                  className="w-full bg-slate-800 border border-slate-600/70 rounded-xl px-3 py-2.5 pr-10 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30"
+                  style={{ fontSize: '16px' }}
+                />
+                <button onClick={() => setShowGemKey(!showGemKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-base">
+                  {showGemKey ? '🙈' : '👁'}
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-600 mt-1">
+                Получите ключ на <span className="text-emerald-500">aistudio.google.com</span> → Get API key → бесплатно
+              </p>
+            </div>
+          )}
 
           {/* OpenRouter key input */}
           {isOR && (
@@ -201,7 +256,7 @@ export function SettingsPanel({
                 </button>
               </div>
               <p className="text-[10px] text-slate-600 mt-1">
-                Получите ключ на <span className="text-purple-500">openrouter.ai</span> · Модель: deepseek/deepseek-chat-v3-0324:free
+                Получите ключ на <span className="text-purple-500">openrouter.ai</span> → Keys
               </p>
             </div>
           )}
@@ -213,7 +268,7 @@ export function SettingsPanel({
             <EngineCard
               active={ttsSettings.engine === 'web-speech'}
               title="Web Speech"
-              subtitle="Системные голоса"
+              subtitle="Системные голоса · Premium на iOS"
               badge="🆓 Бесплатно"
               badgeColor="emerald"
               onClick={() => onTTSChange({ ...ttsSettings, engine: 'web-speech' })}
@@ -221,7 +276,7 @@ export function SettingsPanel({
             <EngineCard
               active={ttsSettings.engine === 'elevenlabs'}
               title="ElevenLabs"
-              subtitle="Flash v2.5 · ИИ-голос"
+              subtitle="Flash v2.5 · ИИ-голос · человеческое качество"
               badge="🔑 API ключ"
               badgeColor="violet"
               onClick={() => onTTSChange({ ...ttsSettings, engine: 'elevenlabs' })}
@@ -306,7 +361,7 @@ export function SettingsPanel({
               <div className="flex items-center justify-between pt-1">
                 <div>
                   <span className="text-sm text-slate-300 block">Женский голос</span>
-                  <span className="text-xs text-slate-500">Автовыбор голоса</span>
+                  <span className="text-xs text-slate-500">Автовыбор премиум-голоса</span>
                 </div>
                 <Toggle value={ttsSettings.preferFemale} onChange={v => onTTSChange({ ...ttsSettings, preferFemale: v })} />
               </div>
@@ -322,7 +377,9 @@ export function SettingsPanel({
               {voicesForLangB.length > 0
                 ? <VoiceSelect label={`Голос B (${langB})`} voices={voicesForLangB} value={voiceOverrideB} onChange={onVoiceOverrideBChange} />
                 : <p className="text-sm text-slate-500 bg-slate-800/40 rounded-xl px-4 py-3">Голоса для {langB} не найдены</p>}
-              <p className="text-[10px] text-slate-600 px-1">📱 встроенный · ☁️ онлайн</p>
+              <p className="text-[10px] text-slate-600 px-1">
+                📱 встроенный · ☁️ онлайн · ⭐ премиум (Siri-качество)
+              </p>
             </div>
           )}
         </Section>
@@ -392,12 +449,13 @@ function Section({ icon, title, children }: { icon: string; title: string; child
 
 function EngineCard({ active, title, subtitle, badge, badgeColor, onClick }: {
   active: boolean; title: string; subtitle: string; badge: string;
-  badgeColor: 'emerald' | 'purple' | 'violet'; onClick: () => void;
+  badgeColor: 'slate' | 'emerald' | 'purple' | 'violet'; onClick: () => void;
 }) {
   const borderColor = active
     ? badgeColor === 'emerald' ? 'border-emerald-500/60 bg-emerald-900/20'
     : badgeColor === 'purple' ? 'border-purple-500/60 bg-purple-900/20'
-    : 'border-violet-500/60 bg-violet-900/20'
+    : badgeColor === 'violet' ? 'border-violet-500/60 bg-violet-900/20'
+    : 'border-slate-500/60 bg-slate-800/40'
     : 'border-slate-700/60 bg-slate-800/40';
 
   return (
@@ -409,13 +467,17 @@ function EngineCard({ active, title, subtitle, badge, badgeColor, onClick }: {
       <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium ${
         badgeColor === 'emerald' ? 'bg-emerald-900/40 text-emerald-400 border-emerald-700/40'
         : badgeColor === 'purple' ? 'bg-purple-900/40 text-purple-400 border-purple-700/40'
-        : 'bg-violet-900/40 text-violet-400 border-violet-700/40'
+        : badgeColor === 'violet' ? 'bg-violet-900/40 text-violet-400 border-violet-700/40'
+        : 'bg-slate-800/60 text-slate-500 border-slate-700/40'
       }`}>
         {badge}
       </span>
       {active && (
         <div className={`mt-2 text-xs font-bold ${
-          badgeColor === 'emerald' ? 'text-emerald-400' : badgeColor === 'purple' ? 'text-purple-400' : 'text-violet-400'
+          badgeColor === 'emerald' ? 'text-emerald-400'
+          : badgeColor === 'purple' ? 'text-purple-400'
+          : badgeColor === 'violet' ? 'text-violet-400'
+          : 'text-slate-400'
         }`}>✓ Активен</div>
       )}
     </button>
@@ -461,6 +523,9 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
 function VoiceSelect({ label, voices, value, onChange }: {
   label: string; voices: SpeechSynthesisVoice[]; value: string | null; onChange: (v: string | null) => void;
 }) {
+  const isPremium = (v: SpeechSynthesisVoice) =>
+    /premium|enhanced|siri|google/i.test(v.name + ' ' + (v.voiceURI || ''));
+
   return (
     <div className="bg-slate-800/60 rounded-2xl border border-slate-700/40 px-4 py-3">
       <label className="block text-xs text-slate-400 mb-2 font-medium">{label}</label>
@@ -469,7 +534,9 @@ function VoiceSelect({ label, voices, value, onChange }: {
         style={{ fontSize: '16px' }}>
         <option value="">🎲 Автовыбор</option>
         {voices.map(v => (
-          <option key={v.name} value={v.name}>{v.localService ? '📱' : '☁️'} {v.name}</option>
+          <option key={v.name} value={v.name}>
+            {isPremium(v) ? '⭐' : v.localService ? '📱' : '☁️'} {v.name}
+          </option>
         ))}
       </select>
     </div>
