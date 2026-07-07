@@ -1,6 +1,6 @@
-// Translation service — hybrid: OpenRouter LLM + MyMemory/Lingva fallback
+// Translation service — hybrid: Gemini (free) → OpenRouter LLM → MyMemory/Lingva/LibreTranslate fallback
 
-export type TranslateAPI = 'mymemory' | 'lingva' | 'libretranslate' | 'openrouter';
+export type TranslateAPI = 'gemini' | 'openrouter' | 'mymemory' | 'lingva' | 'libretranslate';
 
 export interface TranslateResult {
   text: string;
@@ -34,6 +34,124 @@ function chunkText(text: string, maxLen = 450): string[] {
   }
   if (current) chunks.push(current.trim());
   return chunks;
+}
+
+// ── Language names ───────────────────────────────────────────────────────────
+const LANG_NAMES: Record<string, string> = {
+  en: 'English', ru: 'Russian', uk: 'Ukrainian', ro: 'Romanian',
+  de: 'German', fr: 'French', es: 'Spanish', it: 'Italian',
+  pt: 'Portuguese', pl: 'Polish', nl: 'Dutch', sv: 'Swedish',
+  nb: 'Norwegian', da: 'Danish', fi: 'Finnish', tr: 'Turkish',
+  cs: 'Czech', sk: 'Slovak', bg: 'Bulgarian', hr: 'Croatian',
+  sr: 'Serbian', hu: 'Hungarian', el: 'Greek', lt: 'Lithuanian',
+  lv: 'Latvian', et: 'Estonian',
+};
+
+// ── Gemini Flash (free tier, 1500 req/day) ───────────────────────────────────
+async function translateGemini(
+  text: string,
+  from: string,
+  to: string,
+  apiKey: string
+): Promise<string> {
+  const fromCode = from.split('-')[0];
+  const toCode = to.split('-')[0];
+  const fromName = LANG_NAMES[fromCode] || fromCode;
+  const toName = LANG_NAMES[toCode] || toCode;
+
+  const res = await fetchWithTimeout(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{
+            text: `You are an expert conversational translator. Translate from ${fromName} to ${fromName}.
+
+Rules:
+- Match the exact register and tone (slang→slang, formal→formal, casual→casual)
+- Translate idioms into culturally equivalent expressions — NEVER literal
+- Optimize for spoken voice communication — natural rhythm
+- Output ONLY the translated text. No quotes, no explanations, no notes.
+
+Text to translate:
+${text}`
+          }]
+        }],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 1024,
+        },
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    if (res.status === 429) throw new Error('Gemini rate limit — попробуйте позже');
+    if (res.status === 400 && errBody.includes('API key')) throw new Error('Неверный Gemini API ключ');
+    throw new Error(`Gemini HTTP ${res.status}: ${errBody.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const result = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+  if (!result) throw new Error('Gemini: empty response');
+  return result;
+}
+
+// ── OpenRouter (DeepSeek-V3) ─────────────────────────────────────────────────
+async function translateOpenRouter(
+  text: string,
+  from: string,
+  to: string,
+  apiKey: string
+): Promise<string> {
+  const fromCode = from.split('-')[0];
+  const toCode = to.split('-')[0];
+  const fromName = LANG_NAMES[fromCode] || fromCode;
+  const toName = LANG_NAMES[toCode] || toCode;
+
+  const res = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': window.location.origin,
+      'X-Title': 'VoiceSwap Translator',
+    },
+    body: JSON.stringify({
+      model: 'deepseek/deepseek-chat-v3-0324:free',
+      messages: [
+        {
+          role: 'system',
+          content: `You are an expert conversational translator specializing in spoken, natural language.
+Translate from ${fromName} to ${toName}.
+
+Rules:
+- Match the exact register and tone (slang→slang, formal→formal, casual→casual).
+- Translate idioms into culturally equivalent expressions in the target language — NEVER literal.
+- Optimized for spoken voice communication — natural rhythm, contractions allowed.
+- Output ONLY the translated text. No quotes, no explanations, no notes, no alternatives.`,
+        },
+        { role: 'user', content: text },
+      ],
+      temperature: 0.2,
+      max_tokens: 1024,
+    }),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    if (res.status === 429) throw new Error('OpenRouter rate limit — слишком много запросов');
+    if (res.status === 401) throw new Error('Неверный OpenRouter API ключ');
+    throw new Error(`OpenRouter HTTP ${res.status}: ${errBody.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const result = data.choices?.[0]?.message?.content?.trim();
+  if (!result) throw new Error('OpenRouter: empty response');
+  return result;
 }
 
 // ── MyMemory ─────────────────────────────────────────────────────────────────
@@ -89,86 +207,50 @@ async function translateLibre(text: string, from: string, to: string): Promise<s
   return results.join(' ');
 }
 
-// ── OpenRouter LLM ───────────────────────────────────────────────────────────
-const LANG_NAMES: Record<string, string> = {
-  en: 'English', ru: 'Russian', uk: 'Ukrainian', ro: 'Romanian',
-  de: 'German', fr: 'French', es: 'Spanish', it: 'Italian',
-  pt: 'Portuguese', pl: 'Polish', nl: 'Dutch', sv: 'Swedish',
-  nb: 'Norwegian', da: 'Danish', fi: 'Finnish', tr: 'Turkish',
-  cs: 'Czech', sk: 'Slovak', bg: 'Bulgarian', hr: 'Croatian',
-  sr: 'Serbian', hu: 'Hungarian', el: 'Greek', lt: 'Lithuanian',
-  lv: 'Latvian', et: 'Estonian',
-};
-
-export async function translateOpenRouter(
-  text: string,
-  from: string,
-  to: string,
-  apiKey: string
-): Promise<string> {
-  const fromCode = from.split('-')[0];
-  const toCode = to.split('-')[0];
-  const fromName = LANG_NAMES[fromCode] || fromCode;
-  const toName = LANG_NAMES[toCode] || toCode;
-
-  const res = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': window.location.origin,
-      'X-Title': 'VoiceSwap Translator',
-    },
-    body: JSON.stringify({
-      model: 'deepseek/deepseek-chat-v3-0324:free',
-      messages: [
-        {
-          role: 'system',
-          content: `You are an expert conversational translator specializing in spoken, natural language.
-Translate from ${fromName} to ${toName}.
-
-Rules:
-- Match the exact register and tone (slang→slang, formal→formal, casual→casual).
-- Translate idioms into culturally equivalent expressions in the target language — NEVER literal.
-- Optimized for spoken voice communication — natural rhythm, contractions allowed.
-- Output ONLY the translated text. No quotes, no explanations, no notes, no alternatives.`,
-        },
-        { role: 'user', content: text },
-      ],
-      temperature: 0.2,
-      max_tokens: 1024,
-    }),
-  });
-
-  if (!res.ok) {
-    const errBody = await res.text().catch(() => '');
-    throw new Error(`OpenRouter HTTP ${res.status}: ${errBody.slice(0, 200)}`);
-  }
-
-  const data = await res.json();
-  const result = data.choices?.[0]?.message?.content?.trim();
-  if (!result) throw new Error('OpenRouter: empty response');
-  return result;
-}
-
 // ── Main translate ───────────────────────────────────────────────────────────
 export async function translate(
   text: string,
   from: string,
   to: string,
-  preferredApi: TranslateAPI = 'mymemory',
+  preferredApi: TranslateAPI = 'gemini',
+  geminiKey?: string,
   openRouterKey?: string
 ): Promise<TranslateResult> {
   if (!text.trim()) return { text: '', api: 'none' };
 
-  // If OpenRouter selected and key provided — try it first
+  // LLM chain: Gemini → OpenRouter
+  if (preferredApi === 'gemini' && geminiKey) {
+    try {
+      const translated = await translateGemini(text, from, to, geminiKey);
+      return { text: translated, api: 'gemini' };
+    } catch (err) {
+      console.warn('[translate] Gemini failed:', err);
+      // Try OpenRouter as fallback if available
+      if (openRouterKey) {
+        try {
+          const translated = await translateOpenRouter(text, from, to, openRouterKey);
+          return { text: translated, api: 'openrouter' };
+        } catch (err2) {
+          console.warn('[translate] OpenRouter fallback failed:', err2);
+        }
+      }
+    }
+  }
+
   if (preferredApi === 'openrouter' && openRouterKey) {
     try {
       const translated = await translateOpenRouter(text, from, to, openRouterKey);
       return { text: translated, api: 'openrouter' };
     } catch (err) {
-      console.warn('[translate] OpenRouter failed, falling back:', err);
-      // Fall through to free APIs
+      console.warn('[translate] OpenRouter failed, trying Gemini:', err);
+      if (geminiKey) {
+        try {
+          const translated = await translateGemini(text, from, to, geminiKey);
+          return { text: translated, api: 'gemini' };
+        } catch (err2) {
+          console.warn('[translate] Gemini fallback failed:', err2);
+        }
+      }
     }
   }
 
@@ -179,8 +261,11 @@ export async function translate(
     { name: 'libretranslate', fn: () => translateLibre(text, from, to) },
   ];
 
-  // If non-OpenRouter preferred, put it first
-  const preferred = preferredApi !== 'openrouter' ? preferredApi : 'mymemory';
+  // If preferred is free API, put it first
+  const preferred = (preferredApi !== 'gemini' && preferredApi !== 'openrouter')
+    ? preferredApi
+    : 'mymemory';
+
   const ordered = [
     ...freeApis.filter(a => a.name === preferred),
     ...freeApis.filter(a => a.name !== preferred),
