@@ -9,10 +9,35 @@ import { SettingsPanel } from './components/SettingsPanel';
 type ActiveSpeaker = 'A' | 'B' | null;
 type AppState = 'idle' | 'listening' | 'translating' | 'speaking';
 
+// ── localStorage helpers ─────────────────────────────────────────────────────
+const LS_KEYS = {
+  langA: 'voiceswap_langA',
+  langB: 'voiceswap_langB',
+  translateAPI: 'voiceswap_api',
+  geminiKey: 'voiceswap_gemini_key',
+  openRouterKey: 'voiceswap_or_key',
+  ttsSettings: 'voiceswap_tts',
+  autoSpeak: 'voiceswap_auto_speak',
+  voiceOverrideA: 'voiceswap_voice_a',
+  voiceOverrideB: 'voiceswap_voice_b',
+};
+
+function loadLS<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function saveLS(key: string, value: unknown) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+}
+
 export default function App() {
-  // ── Languages ──────────────────────────────────────────────────────────────
-  const [langA, setLangA] = useState('ru-RU');
-  const [langB, setLangB] = useState('en-US');
+  // ── Languages (persisted) ────────────────────────────────────────────────
+  const [langA, setLangA] = useState(() => loadLS(LS_KEYS.langA, 'ru-RU'));
+  const [langB, setLangB] = useState(() => loadLS(LS_KEYS.langB, 'en-US'));
 
   // ── App state ──────────────────────────────────────────────────────────────
   const [appState, setAppState] = useState<AppState>('idle');
@@ -25,15 +50,34 @@ export default function App() {
   const [repeatingId, setRepeatingId] = useState<string | null>(null);
   const dialogEndRef = useRef<HTMLDivElement>(null);
 
-  // ── Settings ───────────────────────────────────────────────────────────────
+  // ── Settings (persisted) ───────────────────────────────────────────────────
   const [showSettings, setShowSettings] = useState(false);
-  const [autoSpeak, setAutoSpeak] = useState(true);
-  const [ttsSettings, setTtsSettings] = useState<TTSSettings>(DEFAULT_TTS);
-  const [translateAPI, setTranslateAPI] = useState<TranslateAPI>('gemini');
-  const [geminiKey, setGeminiKey] = useState('');
-  const [openRouterKey, setOpenRouterKey] = useState('');
-  const [voiceOverrideA, setVoiceOverrideA] = useState<string | null>(null);
-  const [voiceOverrideB, setVoiceOverrideB] = useState<string | null>(null);
+  const [autoSpeak, setAutoSpeak] = useState(() => loadLS(LS_KEYS.autoSpeak, true));
+  const [ttsSettings, setTtsSettings] = useState<TTSSettings>(() =>
+    loadLS(LS_KEYS.ttsSettings, DEFAULT_TTS)
+  );
+  const [translateAPI, setTranslateAPI] = useState<TranslateAPI>(() =>
+    loadLS(LS_KEYS.translateAPI, 'gemini')
+  );
+  const [geminiKey, setGeminiKey] = useState(() => loadLS(LS_KEYS.geminiKey, ''));
+  const [openRouterKey, setOpenRouterKey] = useState(() => loadLS(LS_KEYS.openRouterKey, ''));
+  const [voiceOverrideA, setVoiceOverrideA] = useState<string | null>(() =>
+    loadLS(LS_KEYS.voiceOverrideA, null)
+  );
+  const [voiceOverrideB, setVoiceOverrideB] = useState<string | null>(() =>
+    loadLS(LS_KEYS.voiceOverrideB, null)
+  );
+
+  // Persist to localStorage on change
+  useEffect(() => saveLS(LS_KEYS.langA, langA), [langA]);
+  useEffect(() => saveLS(LS_KEYS.langB, langB), [langB]);
+  useEffect(() => saveLS(LS_KEYS.translateAPI, translateAPI), [translateAPI]);
+  useEffect(() => saveLS(LS_KEYS.geminiKey, geminiKey), [geminiKey]);
+  useEffect(() => saveLS(LS_KEYS.openRouterKey, openRouterKey), [openRouterKey]);
+  useEffect(() => saveLS(LS_KEYS.ttsSettings, ttsSettings), [ttsSettings]);
+  useEffect(() => saveLS(LS_KEYS.autoSpeak, autoSpeak), [autoSpeak]);
+  useEffect(() => saveLS(LS_KEYS.voiceOverrideA, voiceOverrideA), [voiceOverrideA]);
+  useEffect(() => saveLS(LS_KEYS.voiceOverrideB, voiceOverrideB), [voiceOverrideB]);
 
   // ── Refs for async callbacks ───────────────────────────────────────────────
   const activeSpeakerRef = useRef<ActiveSpeaker>(null);
@@ -245,7 +289,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Key status indicators */}
             {translateAPI === 'gemini' && (
               <div className={`flex items-center gap-1 text-[9px] px-2 py-1 rounded-lg border ${
                 hasGeminiKey
